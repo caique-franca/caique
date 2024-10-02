@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# Define the versions
+ARCHS=("amd64" "arm64")
+BIN_NAME="release"
+
+# Loop over the architectures
+for ARCH in "${ARCHS[@]}"; do
+    echo "Building for $ARCH..."
+    GOARCH=$ARCH GOOS=linux go build -o $BIN_NAME-$ARCH
+    echo "Pushing $BIN_NAME-$ARCH to Artifactory..."
+    # Push to Artifactory (assuming you have a pre-configured CLI or other method)
+    curl -u $ARTIFACTORY_USER:$ARTIFACTORY_PASSWORD \
+        -T ./$BIN_NAME-$ARCH \
+        "https://artifactory.yourcompany.com/artifactory/generic-local/$BIN_NAME-$ARCH"
+done
+
+
+
+
+# Use multi-stage builds
+FROM --platform=$TARGETPLATFORM golang:1.20-alpine AS builder
+
+# Set environment variables for CA certificates and required packages
+ENV CGO_ENABLED=0
+
+# Install dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    git \
+    unzip \
+    make \
+    diffutils \
+    jq \
+    curl
+
+# Download and install go-semrel-gitlab binary based on architecture
+ARG TARGETPLATFORM
+RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
+        curl -o /usr/local/bin/release "https://artifactory.yourcompany.com/artifactory/generic-local/release-amd64"; \
+    elif [ "$TARGETPLATFORM" = "linux/arm64" ]; then \
+        curl -o /usr/local/bin/release "https://artifactory.yourcompany.com/artifactory/generic-local/release-arm64"; \
+    fi && \
+    chmod +x /usr/local/bin/release
+
+# Final stage: use a minimal base image
+FROM --platform=$TARGETPLATFORM alpine:3.18
+
+# Copy CA certificates and binary from the builder stage
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/local/bin/release /usr/local/bin/release
+
+# Set entrypoint or CMD
+CMD ["release"]

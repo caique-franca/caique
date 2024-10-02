@@ -1,0 +1,79 @@
+[transforms.redhat]
+  type = "remap"
+  inputs = ["filebeat"]
+  source = '''
+  if .fields.os_family == "redhat" {
+    .app = parse_regex!(.log.file.path, r'^/home/Falcon/logs/falcon-(?P<app>[^/]+)/').app
+  }
+  '''
+
+[transforms.windows]
+  type = "remap"
+  inputs = ["filebeat"]
+  source = '''
+  if .fields.os_family == "windows" {
+    .app = parse_regex!(.log.file.path, r'^d:\\localhost\\log\\(?P<app>.+?)(\.\d{8})?\.err').app
+  }
+  '''
+
+[transforms.normalize_app]
+  type = "remap"
+  inputs = ["redhat", "windows"]
+  source = '''
+  .app = downcase!(.app)
+  '''
+
+[transforms.extract_event_details]
+  type = "remap"
+  inputs = ["normalize_app"]
+  source = '''
+  .event_timestamp, .log_level = (null, null)
+  .message = parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3})')
+  
+  if is_null(.event_timestamp) {
+    .message = parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[0-9]{3}: (?P<log_level>\w+)')
+  }
+
+  if is_null(.event_timestamp) {
+    .message = parse_regex(.message, r'(?P<event_timestamp>\d{8}-\d{2}:\d{2}:\d{2}\.\d{3})')
+  }
+
+  if is_null(.event_timestamp) {
+    del(.event_timestamp)
+    del(.log_level)
+  }
+  '''
+
+[transforms.add_fields]
+  type = "remap"
+  inputs = ["extract_event_details"]
+  source = '''
+  if is_null(.app) {
+    .app = "missing"
+    .fields.info = "app field missing"
+  }
+
+  if .fields.app_group == "dwclob" {
+    .subsystem = "dwc-" + .app
+  } else {
+    .subsystem = "dw-" + .app
+  }
+
+  .application = "eu-prd"
+  .fields.logstash_host = "{{ inventory_hostname }}"
+  '''
+
+[sinks.coralogix]
+  type = "http"
+  inputs = ["add_fields"]
+  uri = "{{ coralogix.endpoint }}"
+  method = "post"
+  encoding.codec = "json"
+  compression = "none"
+  headers = { "private_key" = "{{ coralogix.localhost_dw_key }}" }
+  retry_attempts = 5
+  retry_initial_backoff_secs = 30
+  request_timeout_secs = 30
+  keepalive = false
+  batch.max_bytes = 1048576
+  batch.timeout_secs = 1

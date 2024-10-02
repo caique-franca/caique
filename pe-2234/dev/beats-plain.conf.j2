@@ -1,0 +1,136 @@
+input {
+  beats {
+    port => 5044
+{% if logstash_ssl %}
+    ssl => true
+    ssl_certificate => "/usr/share/logstash/config/{{ logstash_ssl_certificate }}"
+    ssl_key => "/usr/share/logstash/config/{{ logstash_ssl_key }}"
+    ssl_key_passphrase => "{{ logstash_ssl_key_passphrase }}"
+{% endif %}
+  }
+
+  pipeline { address => "beats-plain" }
+}
+
+filter {
+  # infer index name
+  if [fields][os_family] == "redhat" {
+    grok {
+      match => {
+        "[log][file][path]" => [
+                                "^/home/Falcon/logs/falcon-(?<app>[^/]+)/",
+                                "^/data/dwc/app/.+-(?<core>[^/]+)-(?<app>[^/]+)/",
+                                "^/data/dwyb/app/.+-(?<core>[^/]+)-(?<app>[^/]+)/",
+                                "^/home/svc_dwclob/dwclob/(?<app>[^/]+)/",
+                                "^/data/dwc/(?<app>[^/]+)/",
+                                "^/data/dwyb/(?<app>[^/]+)/"
+                               ]
+      }
+    }
+  }
+  if [fields][os_family] == "windows" {
+    grok {
+      match => {
+        "[log][file][path]" => "^d:\\localhost\\log\\(?<app>.+?)(\.\d{8})?\.err"
+      }
+    }
+  }
+  # index name must be lower case
+  mutate {
+    lowercase => [ "app" ]
+  }
+
+  # extract log_level and event_timestamp
+  grok {
+    match => {
+      "message" => [
+        # parse risk-watcher-service-irs "standard" log messages
+        # INF 04/07 22:18:10.802874 [21777] Published heartbeat with
+        # or PRF_PS08 "class" log messages
+        # ERR 05/14 21:34:53:369 PRF_PS08 ODB_PS01~~ERROR   SYSTEM
+        # OK  05/14 21:45:44:545 TWDSP_PRF01 DEBUG   SYSTEM CSer
+        # or llm-repeater log messages
+        # INF 04/07 03:18:08.921322336 2020-04-07 03:18:06.010434: ERR : LLM> KVS[lmdb]:
+        "^%{WORD:log_level}\s+(?<event_timestamp>%{MONTHNUM}/%{MONTHDAY} %{HOUR}:%{MINUTE}:(?:[0-5][0-9]|60)[.:][0-9]{3})",
+        # parse llm-monitor log messages
+        # 2020-04-07 22:15:16.237349: WARN : LLM> Store[monitor]: Ignore
+        "^(?<event_timestamp>%{YEAR}-%{MONTHNUM}-%{MONTHDAY} %{HOUR}:%{MINUTE}:(?:[0-5][0-9]|60)\.[0-9]{3})[0-9]{3}: %{WORD:log_level}",
+        # parse fix log messages
+        # 20200514-21:56:54.130 : 8=FIX.4.49=9035=034=1149
+        "^(?<event_timestamp>%{YEAR}%{MONTHNUM}%{MONTHDAY}-%{HOUR}:%{MINUTE}:(?:[0-5][0-9]|60)\.[0-9]{3})"
+      ]
+    }
+  }
+
+  date {
+    match => [
+      "event_timestamp",
+      "MM/dd HH:mm:ss.SSS",
+      "MM/dd HH:mm:ss:SSS",
+      "YYYY-MM-dd HH:mm:ss.SSS",
+      "YYYYMMdd-HH:mm:ss.SSS"
+    ]
+    target => "event_timestamp"
+  }
+
+  if ![fields][env] {
+    mutate { add_field => { "[fields][env]" => "missing" } }
+    mutate { add_field => { "[fields][error_info]" => "fields.env missing" } }
+  }
+
+  if ![fields][region] {
+    mutate { add_field => { "[fields][region]" => "missing" } }
+    mutate { add_field => { "[fields][error_info]" => "fields.region missing" } }
+  }
+
+  if ![app] {
+    mutate { add_field => { "[app]" => "missing" } }
+    mutate { add_field => { "[fields][error_info]" => "app field missing" } }
+  }
+
+  if [fields][app_group] == "systemtester" {
+    mutate { add_field => { "[@metadata][subsystem]" => "%{[fields][app_group]}" } }
+  }
+  else if [fields][app_group] == "dwclob" {
+    mutate { add_field => { "[@metadata][subsystem]" => "dwc-%{[app]}" } }
+  }
+  else if [fields][app_group] == "dwyb" {
+    mutate { add_field => { "[@metadata][subsystem]" => "dwyb-%{[app]}" } }
+  }
+
+  else {
+    # dw doesn't have an app_group defined in filebeat
+    mutate { add_field => { "[@metadata][subsystem]" => "dw-%{[app]}" } }
+  }
+
+  mutate {
+    add_field => { "[@metadata][application]" => "%{[fields][region]}-%{[fields][env]}" }
+    add_field => { "[fields][logstash_host]" => "{{ inventory_hostname }}" }
+  }
+
+  ruby {code => "
+    event.set('[@metadata][event]', event.to_json)
+    event.set('[@metadata][host]', event.get('[host][name]'))
+  "}
+}
+
+output {
+  http {
+    url => "{{ coralogix.endpoint }}"
+    http_method => "post"
+    headers => ["private_key", "{{ coralogix.localhost_dw_key }}"]
+    format => "json_batch"
+    codec => "json"
+    mapping => {
+      "applicationName" => "%{[@metadata][application]}"
+      "subsystemName" => "%{[@metadata][subsystem]}"
+      "computerName" => "%{[@metadata][host]}"
+      "text" => "%{[@metadata][event]}"
+    }
+    http_compression => false
+    automatic_retries => 5
+    retry_non_idempotent => true
+    connect_timeout => 30
+    keepalive => false
+  }
+}

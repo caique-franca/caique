@@ -1,0 +1,71 @@
+# Instalar QEMU e binfmt-support em RHEL/CentOS/Fedora
+sudo yum install -y qemu qemu-user-static
+
+# Registrar binfmt_misc para emulação ARM64
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+# Verificar se a emulação ARM64 está funcionando
+docker run --rm --platform linux/arm64 busybox uname -m
+
+# Executar um contêiner ARM64
+docker run -it --platform=linux/arm64 python:3.9.19-bullseye /bin/bash
+
+
+
+sudo yum groupinstall -y "Development Tools"
+sudo yum install -y glib2-devel pixman-devel zlib-devel
+wget https://download.qemu.org/qemu-8.0.0.tar.xz
+tar xvJf qemu-8.0.0.tar.xz
+cd qemu-8.0.0
+./configure --target-list=aarch64-softmmu,aarch64-linux-user
+make -j$(nproc)
+sudo make install
+sudo mkdir -p /lib/binfmt.d
+echo ':qemu-arm64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff:/usr/local/bin/qemu-aarch64:' | sudo tee /lib/binfmt.d/qemu-arm64.conf
+sudo systemctl restart systemd-binfmt
+qemu-aarch64 --version
+
+
+sudo yum groupinstall -y "Development Tools"
+sudo yum install -y glib2-devel pixman-devel zlib-devel libffi-devel \
+                    openssl-devel libusbx-devel gtk3-devel
+wget https://download.qemu.org/qemu-8.0.0.tar.xz
+tar -xvf qemu-8.0.0.tar.xz
+cd qemu-8.0.0
+./configure --static --target-list=aarch64-linux-user,arm-linux-user
+make -j$(nproc)
+sudo make install
+sudo mkdir -p /lib/binfmt.d
+echo ':qemu-arm64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff:/usr/local/bin/qemu-aarch64-static:' | sudo tee /lib/binfmt.d/qemu-arm64.conf
+sudo systemctl restart systemd-binfmt
+qemu-aarch64-static --version
+docker run --rm --platform linux/arm64 busybox uname -m
+
+
+sudo yum install -y devtoolset-10
+scl enable devtoolset-10 bash
+gcc --version
+
+
+
+
+../meson.build:289:4: ERROR: Problem encountered: You either need GCC v7.4 or Clang v10.0 (or XCode Clang v12.0) to compile QEMU
+
+../meson.build:926:10: ERROR: Dependency lookup for glib-2.0 with method 'pkgconfig' failed: Invalid version, need 'glib-2.0' ['>=2.66.0'] found '2.56.1'.
+
+
+
+sudo yum install -y gettext autoconf automake libtool bison flex
+wget https://download.gnome.org/sources/glib/2.66/glib-2.66.0.tar.xz
+tar -xvf glib-2.66.0.tar.xz
+cd glib-2.66.0
+
+# Configurar o build
+./configure --prefix=/usr/local/glib-2.66
+
+# Compilar e instalar
+make -j$(nproc)
+sudo make install
+
+export PKG_CONFIG_PATH=/usr/local/glib-2.66/lib/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=/usr/local/glib-2.66/lib:$LD_LIBRARY_PATH

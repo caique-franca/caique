@@ -1,0 +1,55 @@
+# superadmin group
+{{- range $.superadminGroups }}
+g, {{ . }}, role:admin
+{{- end }}
+
+# read-only group
+{{- range $ldapGroup, $projectSlice := .readOnlyLdapGroupsToProjects }}
+{{- range $index, $project := $projectSlice }}
+p, role:{{ $ldapGroup }}, applicationsets, get, {{ $project.Name }}/*, allow
+{{- end }}
+g, {{ $ldapGroup }}, role:{{ $ldapGroup }}
+{{- end }}
+
+# read-write group
+{{- range $ldapGroup, $projectSlice := .readWriteLdapGroupsToProjects }}
+{{- range $index, $project := $projectSlice }}
+p, role:{{ $ldapGroup }}, applications,    sync, {{ $project.Name }}/*, allow
+p, role:{{ $ldapGroup }}, applicationsets, get,  {{ $project.Name }}/*, allow
+{{- end }}
+g, {{ $ldapGroup }}, role:{{ $ldapGroup }}
+{{- end }}
+
+# admin group
+{{- range $ldapGroup, $projectSlice := .adminLdapGroupsToProjects }}
+{{- range $index, $project := $projectSlice }}
+p, role:{{ $ldapGroup }}, applications,    delete, {{ $project.Name }}/*, allow
+p, role:{{ $ldapGroup }}, applications,    sync,   {{ $project.Name }}/*, allow
+p, role:{{ $ldapGroup }}, applications,    update, {{ $project.Name }}/*, allow
+p, role:{{ $ldapGroup }}, applicationsets, get,    {{ $project.Name }}/*, allow
+p, role:{{ $ldapGroup }}, exec,            create, {{ $project.Name }}/*, allow
+{{- end }}
+g, {{ $ldapGroup }}, role:{{ $ldapGroup }}
+{{- end }}
+
+# privileged CORE groups
+{{- range $ldapGroup, $groupToActionsMap := .privilegedGroups }}
+{{- range $projectName, $actionsSlice := $groupToActionsMap }}
+p, role:{{ $ldapGroup }}, applicationsets, get,    {{ $projectName }}/*, allow
+{{- range $index, $action := $actionsSlice }}
+{{- if eq $action "delete" }}
+p, role:{{ $ldapGroup }}, applications,    delete, {{ $projectName }}/*, allow
+{{- end }}
+{{- if eq $action "exec" }}
+p, role:{{ $ldapGroup }}, exec,            create, {{ $projectName }}/*, allow
+{{- end }}
+{{- if eq $action "sync" }}
+p, role:{{ $ldapGroup }}, applications,    sync,   {{ $projectName }}/*, allow
+{{- end }}
+{{- end }}
+{{- end }}
+g, {{ $ldapGroup }}, role:{{ $ldapGroup }}
+{{- end }}
+
+# additional RBAC rules
+{{ $.additionalRBACRules }}

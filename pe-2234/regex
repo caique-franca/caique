@@ -1,0 +1,15 @@
+filter {
+  if [fields][os_family] == "redhat" {
+    grok {
+      match => {
+        "[log][file][path]" => "^/home/Falcon/logs/falcon-(?<app>[^/]+)/"
+      }
+    }
+  }
+  if [fields][os_family] == "windows" {
+    grok {
+      match => {
+        "[log][file][path]" => "^d:\\localhost\\log\\(?<app>.+?)(\.\d{8})?\.err"
+      }
+    }
+  }

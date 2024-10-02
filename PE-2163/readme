@@ -1,0 +1,2 @@
+Add action/* to RBAC rules for admins
+Allow admins to execute actions (e.g. things like "Start CronJob" for CronJobs) by default, and also surface it through the CORE RBAC configuration system.

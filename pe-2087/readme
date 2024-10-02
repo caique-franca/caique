@@ -1,0 +1,71 @@
+package app
+
+import (
+	"fmt"
+	"io/ioutil"
+	"log"
+
+	"gopkg.in/yaml.v2"
+	argocdtypes "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+type ResourcesConfig struct {
+	WhitelistedClusterResources    []metav1.GroupKind      `yaml:"whitelistedClusterResources"`
+	BlacklistedClusterResources    []metav1.GroupKind      `yaml:"blacklistedClusterResources"`
+	WhitelistedNamespacedResources []metav1.GroupKind      `yaml:"whitelistedNamespacedResources"`
+	BlacklistedNamespacedResources []metav1.GroupKind      `yaml:"blacklistedNamespacedResources"`
+	SyncWindows                    []*argocdtypes.SyncWindow `yaml:"syncWindows"`
+}
+
+var (
+	whitelistedClusterResourcesDefault    []metav1.GroupKind
+	blacklistedClusterResourcesDefault    []metav1.GroupKind
+	whitelistedNamespacedResourcesDefault []metav1.GroupKind
+	blacklistedNamespacedResourcesDefault []metav1.GroupKind
+	syncWindowsDefault                    []*argocdtypes.SyncWindow
+)
+
+func init() {
+	config, err := loadResourcesConfig("resources_config.yaml")
+	if err != nil {
+		log.Fatalf("Failed to load resources configuration: %v", err)
+	}
+
+	whitelistedClusterResourcesDefault = config.WhitelistedClusterResources
+	blacklistedClusterResourcesDefault = config.BlacklistedClusterResources
+	whitelistedNamespacedResourcesDefault = config.WhitelistedNamespacedResources
+	blacklistedNamespacedResourcesDefault = config.BlacklistedNamespacedResources
+	syncWindowsDefault = config.SyncWindows
+}
+
+func loadResourcesConfig(path string) (*ResourcesConfig, error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read file: %w", err)
+	}
+
+	var config ResourcesConfig
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return nil, fmt.Errorf("unable to unmarshal YAML: %w", err)
+	}
+
+	return &config, nil
+}
+
+
+
+
+
+// The rest of the code remains unchanged
+
+switch arm.CoordinatorMode {
+case c.COORDINATOR_MODE_APPLICATION:
+	whitelistedClusterResourcesFinal = whitelistedClusterResourcesDefault
+	blacklistedClusterResourcesFinal = blacklistedClusterResourcesDefault
+	whitelistedNamespacedResourcesFinal = whitelistedNamespacedResourcesDefault
+	blacklistedNamespacedResourcesFinal = blacklistedNamespacedResourcesDefault
+case c.COORDINATOR_MODE_INFRASTRUCTURE:
+	// no special allowances at present for infra, it can deploy anything
+}
