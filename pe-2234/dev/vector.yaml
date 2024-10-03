@@ -104,3 +104,31 @@
   keepalive = false
   batch.max_bytes = 1048576
   batch.timeout_secs = 1
+
+
+  [transforms.extract_event_details]
+  type = "remap"
+  inputs = ["filebeat"]
+  source = '''
+  .log_level, .event_timestamp = (null, null)
+
+  # Tentativa de extrair log_level e event_timestamp usando o primeiro padrão
+  .message = parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3})')
+
+  # Se falhar, tentar com o segundo padrão (llm-monitor log messages)
+  if is_null(.event_timestamp) {
+    .message = parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[0-9]{3}: (?P<log_level>\w+)')
+  }
+
+  # Se ainda falhar, tentar com o terceiro padrão (fix log messages)
+  if is_null(.event_timestamp) {
+    .message = parse_regex(.message, r'(?P<event_timestamp>\d{8}-\d{2}:\d{2}:\d{2}\.\d{3})')
+  }
+
+  # Remover os campos se a extração falhar
+  if is_null(.event_timestamp) {
+    del(.log_level)
+    del(.event_timestamp)
+  }
+  '''
+
