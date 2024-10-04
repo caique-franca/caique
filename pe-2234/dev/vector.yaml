@@ -2,6 +2,83 @@ type: "remap"
 inputs:
   - _SYSTEM_filebeat
 source: |
+  # Check if the OS family is "redhat"
+  if .fields.os_family == "redhat" {
+    # Attempt to extract the "app" field from the file path using multiple regex patterns
+    # These patterns look for different log file path formats specific to Redhat systems
+    .app, err = parse_regex(.log.file.path, r'^/home/Falcon/logs/falcon-(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwc/app/.+-(?P<core>[^/]+)-(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwyb/app/.+-(?P<core>[^/]+)-(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/home/svc_dwclob/dwclob/(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwc/(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwyb/(?P<app>[^/]+)/').app
+  }
+
+  # Check if the OS family is "windows"
+  if .fields.os_family == "windows" {
+    # Extract the "app" field from the file path for Windows systems
+    .app = parse_regex!(.log.file.path, r'^d:\\localhost\\log\\(?P<app>.+?)(\.\d{8})?\.err').app
+  }
+
+  # Convert the "app" field to lowercase
+  .app = downcase!(.app)
+
+  # Extract "log_level" and "event_timestamp" from the message using multiple regex patterns
+  .parse, err = parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3})') ??
+                parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[0-9]{3}: (?P<log_level>\w+)') ??
+                parse_regex(.message, r'(?P<event_timestamp>\d{8}-\d{2}:\d{2}:\d{2}\.\d{3})') ??
+                parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{6}Z)')
+  
+  # Assign the extracted values to "event_timestamp" and "log_level"
+  .event_timestamp = .parse.event_timestamp
+  .log_level = .parse.log_level
+  
+  # Delete the temporary "parse" object once we're done with it
+  del(.parse)
+
+  # Check if "env" field is missing and assign "missing" if true
+  if is_null(.fields.env) {
+    .fields.env = "missing"
+    .fields.error_info = "fields.env missing"
+  }
+
+  # Check if "region" field is missing and assign "missing" if true
+  if is_null(.fields.region) {
+    .fields.region = "missing"
+    .fields.error_info = "fields.region missing"
+  }
+
+  # Check if "app" field is missing and assign "missing" if true
+  if is_null(.app) {
+    .app = "missing"
+    .fields.error_info = "app field missing"
+  }
+
+  # Set "subsystemName" based on "app_group" value
+  if .fields.app_group == "systemtester" {
+    # If "app_group" is "systemtester", set subsystemName directly
+    .fields.subsystemName = .fields.app_group
+  } else if .fields.app_group == "dwclob" {
+    # For "dwclob" group, prefix the app with "dwc-"
+    .fields.subsystemName = "dwc-" + .app
+  } else if .fields.app_group == "dwyb" {
+    # For "dwyb" group, prefix the app with "dwyb-"
+    .fields.subsystemName = "dwyb-" + .app
+  } else {
+    # For other groups, use a generic "dw-" prefix
+    .fields.subsystemName = "dw-" + .app
+  }
+
+
+
+
+
+type: "remap"
+inputs:
+  - _SYSTEM_filebeat
+source: |
+  # Extract the "app" field based on the file path format.
+  # Different regex patterns handle different paths for Redhat systems.
   if .fields.os_family == "redhat" {
     .app, err = parse_regex(.log.file.path, r'^/home/Falcon/logs/falcon-(?P<app>[^/]+)/').app ??
                 parse_regex(.log.file.path, r'^/data/dwc/app/.+-(?P<core>[^/]+)-(?P<app>[^/]+)/').app ??
@@ -10,19 +87,25 @@ source: |
                 parse_regex(.log.file.path, r'^/data/dwc/(?P<app>[^/]+)/').app ??
                 parse_regex(.log.file.path, r'^/data/dwyb/(?P<app>[^/]+)/').app
   }
+  
+  # For Windows systems, extract the "app" field from the file path.
   if .fields.os_family == "windows" {
     .app = parse_regex!(.log.file.path, r'^d:\\localhost\\log\\(?P<app>.+?)(\.\d{8})?\.err').app
   }
-  .app = downcase!(.app)
+  
+  .app = downcase!(.app)  # Convert "app" to lowercase.
 
+  # Extract "log_level" and "event_timestamp" from the message using multiple regex patterns to handle different formats.
   .parse, err = parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3})') ??
                 parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[0-9]{3}: (?P<log_level>\w+)') ??
                 parse_regex(.message, r'(?P<event_timestamp>\d{8}-\d{2}:\d{2}:\d{2}\.\d{3})') ??
                 parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{6}Z)')
+  
   .event_timestamp = .parse.event_timestamp
   .log_level = .parse.log_level
   del(.parse)
 
+  # Ensure mandatory fields ("env", "region", and "app") are present, adding error info if missing.
   if is_null(.fields.env) {
     .fields.env = "missing"
     .fields.error_info = "fields.env missing"
@@ -38,6 +121,7 @@ source: |
     .fields.error_info = "app field missing"
   }
 
+  # Set the "subsystemName" based on the "app_group", applying different prefixes for each group.
   if .fields.app_group == "systemtester" {
     .fields.subsystemName = .fields.app_group
   } else if .fields.app_group == "dwclob" {
