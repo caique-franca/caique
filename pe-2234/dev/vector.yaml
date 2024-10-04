@@ -1,61 +1,28 @@
-[sources.filebeat]
-  type = "file"
-
-[transforms.redhat]
-  type = "remap"
-  inputs = ["filebeat"]
-  source = '''
+type: "remap"
+inputs:
+  - _SYSTEM_filebeat
+source: |
   if .fields.os_family == "redhat" {
-    .app = parse_regex!(.log.file.path, r'^/home/Falcon/logs/falcon-(?P<app>[^/]+)/').app ?? 
-           parse_regex!(.log.file.path, r'^/data/dwc/app/.+-(?P<core>[^/]+)-(?P<app>[^/]+)/').app ?? 
-           parse_regex!(.log.file.path, r'^/data/dwyb/app/.+-(?P<core>[^/]+)-(?P<app>[^/]+)/').app ?? 
-           parse_regex!(.log.file.path, r'^/home/svc_dwclob/dwclob/(?P<app>[^/]+)/').app ?? 
-           parse_regex!(.log.file.path, r'^/data/dwc/(?P<app>[^/]+)/').app ?? 
-           parse_regex!(.log.file.path, r'^/data/dwyb/(?P<app>[^/]+)/').app
+    .app, err = parse_regex(.log.file.path, r'^/home/Falcon/logs/falcon-(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwc/app/.+-(?P<core>[^/]+)-(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwyb/app/.+-(?P<core>[^/]+)-(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/home/svc_dwclob/dwclob/(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwc/(?P<app>[^/]+)/').app ??
+                parse_regex(.log.file.path, r'^/data/dwyb/(?P<app>[^/]+)/').app
   }
-  '''
-
-[transforms.windows]
-  type = "remap"
-  inputs = ["filebeat"]
-  source = '''
   if .fields.os_family == "windows" {
     .app = parse_regex!(.log.file.path, r'^d:\\localhost\\log\\(?P<app>.+?)(\.\d{8})?\.err').app
   }
-  '''
-
-[transforms.normalize_app]
-  type = "remap"
-  inputs = ["redhat", "windows"]
-  source = '''
   .app = downcase!(.app)
-  '''
 
-[transforms.extract_event_details]
-  type = "remap"
-  inputs = ["normalize_app"]
-  source = '''
-  .event_timestamp, .log_level = (null, null)
-  .message = parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3})')
+  .parse, err = parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3})') ??
+                parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[0-9]{3}: (?P<log_level>\w+)') ??
+                parse_regex(.message, r'(?P<event_timestamp>\d{8}-\d{2}:\d{2}:\d{2}\.\d{3})') ??
+                parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{6}Z)')
+  .event_timestamp = .parse.event_timestamp
+  .log_level = .parse.log_level
+  del(.parse)
 
-  if is_null(.event_timestamp) {
-    .message = parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[0-9]{3}: (?P<log_level>\w+)')
-  }
-
-  if is_null(.event_timestamp) {
-    .message = parse_regex(.message, r'(?P<event_timestamp>\d{8}-\d{2}:\d{2}:\d{2}\.\d{3})')
-  }
-
-  if is_null(.event_timestamp) {
-    del(.event_timestamp)
-    del(.log_level)
-  }
-  '''
-
-[transforms.add_missing_fields]
-  type = "remap"
-  inputs = ["extract_event_details"]
-  source = '''
   if is_null(.fields.env) {
     .fields.env = "missing"
     .fields.error_info = "fields.env missing"
@@ -70,65 +37,13 @@
     .app = "missing"
     .fields.error_info = "app field missing"
   }
-  '''
 
-[transforms.subsystem_mapping]
-  type = "remap"
-  inputs = ["add_missing_fields"]
-  source = '''
   if .fields.app_group == "systemtester" {
-    .subsystem = .fields.app_group
+    .fields.subsystemName = .fields.app_group
   } else if .fields.app_group == "dwclob" {
-    .subsystem = "dwc-" + .app
+    .fields.subsystemName = "dwc-" + .app
   } else if .fields.app_group == "dwyb" {
-    .subsystem = "dwyb-" + .app
+    .fields.subsystemName = "dwyb-" + .app
   } else {
-    .subsystem = "dw-" + .app
+    .fields.subsystemName = "dw-" + .app
   }
-
-  .application = .fields.region + "-" + .fields.env
-  .fields.logstash_host = "{{ inventory_hostname }}"
-  '''
-
-[sinks.coralogix]
-  type = "http"
-  inputs = ["subsystem_mapping"]
-  uri = "{{ coralogix.endpoint }}"
-  method = "post"
-  encoding.codec = "json"
-  compression = "none"
-  headers = { "private_key" = "{{ coralogix.localhost_dw_key }}" }
-  retry_attempts = 5
-  retry_initial_backoff_secs = 30
-  request_timeout_secs = 30
-  keepalive = false
-  batch.max_bytes = 1048576
-  batch.timeout_secs = 1
-
-
-  [transforms.extract_event_details]
-  type = "remap"
-  inputs = ["filebeat"]
-  source = '''
-  .log_level, .event_timestamp = (null, null)
-
-  # Tentativa de extrair log_level e event_timestamp usando o primeiro padrão
-  .message = parse_regex(.message, r'(?P<log_level>\w+)\s+(?P<event_timestamp>\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3})')
-
-  # Se falhar, tentar com o segundo padrão (llm-monitor log messages)
-  if is_null(.event_timestamp) {
-    .message = parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[0-9]{3}: (?P<log_level>\w+)')
-  }
-
-  # Se ainda falhar, tentar com o terceiro padrão (fix log messages)
-  if is_null(.event_timestamp) {
-    .message = parse_regex(.message, r'(?P<event_timestamp>\d{8}-\d{2}:\d{2}:\d{2}\.\d{3})')
-  }
-
-  # Remover os campos se a extração falhar
-  if is_null(.event_timestamp) {
-    del(.log_level)
-    del(.event_timestamp)
-  }
-  '''
-
