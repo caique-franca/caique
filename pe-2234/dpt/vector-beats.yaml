@@ -1,0 +1,85 @@
+[sources.filebeat]
+  type = "file"
+
+[transforms.process_data]
+  type = "remap"
+  inputs = ["filebeat"]
+  source = '''
+  # Remove container labels to save on ingestion costs
+  del(.container.labels)
+
+  # Ensure the container image name is lowercase
+  .container.image.name = downcase!(.container.image.name)
+
+  # Extract information from container image name
+  .parsed, err = parse_regex(.container.image.name, r"(((?<image_repo>[^/]+)/)?(?<image_dir>.+)/)?(?<image_name>[^:/]+):(?<image_version>.+)")
+  
+  if err == null {
+    .container.image.repo = .parsed.image_repo
+    .container.image.dir = .parsed.image_dir
+    .container.image.name = .parsed.image_name
+    .container.image.version = .parsed.image_version
+  }
+  
+  del(.parsed)
+  '''
+
+[transforms.clone_splunk]
+  type = "remap"
+  inputs = ["process_data"]
+  source = '''
+  # Clone nginx, opa and adx-bridge events for Splunk
+  if .container.image.name in ["nginx", "opa", "adx-bridge"] {
+    .splunk_event = copy(.)
+  }
+  '''
+
+[transforms.clone_kafka]
+  type = "remap"
+  inputs = ["process_data"]
+  source = '''
+  # Clone opa events for Kafka
+  if .container.image.name == "opa" {
+    .kafka_event = copy(.)
+  }
+  '''
+
+# Output configuration for Splunk
+[sinks.splunk]
+  type = "http"
+  inputs = ["clone_splunk"]
+  uri = "{{ logstash_beats_plain_splunk_url }}"
+  method = "post"
+  headers = { "Authorization" = "Splunk {{ logstash_beats_plain_splunk_token }}" }
+  request.timeout_secs = 30
+  compression = "none"
+
+[sinks.kafka]
+  type = "kafka"
+  inputs = ["clone_kafka"]
+  bootstrap_servers = "{{ logstash_beats_plain_kafka_bootstrap_servers }}"
+  topic = "dpt-opa"
+  compression = "snappy"
+  acks = "all"
+  linger_ms = 50
+
+  # Kafka SSL configuration
+  security.protocol = "SSL"
+  ssl.key_password = "{{ logstash_beats_plain_kafka_ssl_key_password }}"
+  ssl.keystore_location = "/usr/share/vector/config/{{ logstash_beats_plain_kafka_ssl_keystore }}"
+  ssl.keystore_password = "{{ logstash_beats_plain_kafka_ssl_keystore_password }}"
+  ssl.keystore_type = "JKS"
+  ssl.truststore_location = "/usr/share/vector/config/{{ logstash_beats_plain_kafka_ssl_truststore }}"
+  ssl.truststore_password = "{{ logstash_beats_plain_kafka_ssl_truststore_password }}"
+  ssl.truststore_type = "JKS"
+
+[sinks.coralogix]
+  type = "http"
+  inputs = ["process_data"]
+  uri = "https://api.coralogix.us/logs/rest/singles"
+  method = "post"
+  compression = "none"
+  retry_attempts = 5
+  request.timeout_secs = 30
+  keepalive = false
+  headers = { "private_key" = "{{ coralogix.locaweb_platform_key }}" }
