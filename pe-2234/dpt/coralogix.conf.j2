@@ -1,0 +1,46 @@
+input { pipeline { address => "{{ item.path | basename | regex_replace('^([^\\.]*).*', '\\1') }}" } }
+
+filter {
+
+  if [kubernetes][deployment][name] == "prefect-agent" {
+    mutate  { add_field => { "[@metadata][subsystem]" => "%{[kubernetes][deployment][name]}" } }
+  }
+  else if [cloudwatch_logs][log_group] {
+    mutate  { add_field => { "[@metadata][subsystem]" => "%{[name]}" } }
+  }
+  else {
+    mutate  { add_field => { "[@metadata][subsystem]" => "%{[container][image][name]}" } }
+  }
+
+  mutate {
+    add_field => { "[@metadata][application]" => "us-dev" }
+    add_field => { "[fields][logstash_host]" => "{{ inventory_hostname }}" }
+  }
+
+  ruby {code => "
+    event.set('[@metadata][event]', event.to_json)
+    event.set('[@metadata][host]', event.get('[host][name]'))
+  "}
+}
+
+output {
+  http {
+    url => "{{ coralogix.endpoint }}"
+    http_method => "post"
+    headers => ["private_key", "{{ coralogix.localhost_data_key }}"]
+    format => "json_batch"
+    codec => "json"
+    mapping => {
+      "applicationName" => "%{[@metadata][application]}"
+      "subsystemName" => "%{[@metadata][subsystem]}"
+      "computerName" => "%{[@metadata][host]}"
+      "text" => "%{[@metadata][event]}"
+    }
+    http_compression => false
+    automatic_retries => 5
+    retry_non_idempotent => true
+    connect_timeout => 30
+    keepalive => false
+  }
+}
+

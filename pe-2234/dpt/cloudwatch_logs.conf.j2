@@ -1,0 +1,35 @@
+input {
+  cloudwatch_logs {
+    log_group => [{{ '\"' + logstash_cloudwatch_logs_log_group | join('\", \"') + '\"' }}]
+    interval => 60
+    access_key_id => "AKIAXKCRUTUR4WH2ROCV"
+    secret_access_key => "{{ logstash_cloudwatch_logs_secret_access_key }}"
+    region => "us-east-1"
+    codec => "plain"
+{% if env == "dev" %}
+    # https://github.com/lukewaite/logstash-input-cloudwatch-logs/issues/34
+    proxy_uri => "{{ proxy_settings['HTTP_PROXY'] }}"
+{% endif %}
+  }
+}
+filter {
+  json {
+    source => "message"
+    # Skip so that logstash doesn't log errors parsing nginx errors logs 
+    skip_on_invalid_json => true
+  }
+  grok {
+    match => { 
+      "[cloudwatch_logs][log_group]" => "(?<name>[^/]+)$" 
+    }
+  }
+  # index name must be lower case
+  mutate {
+    lowercase => [ "name" ]
+  }
+}
+output {
+  pipeline {
+    send_to => [coralogix]
+  }
+}

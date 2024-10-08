@@ -1,0 +1,111 @@
+input {
+  beats {
+    port => 5044
+{% if logstash_ssl %}
+    ssl => true
+    ssl_certificate => "/usr/share/logstash/config/{{ logstash_ssl_certificate }}"
+    ssl_key => "/usr/share/logstash/config/{{ logstash_ssl_key }}"
+    ssl_key_passphrase => "{{ logstash_ssl_key_passphrase }}"
+{% endif %}
+  }
+
+  pipeline { address => "beats-plain" }
+}
+
+filter {
+  # drop container labels to save on Coralogix ingestion costs because they are
+  # often quite verbose and rarely contain useful data
+  ruby {code => "event.remove('[container][labels]')"}
+
+  # index name must be lower case
+  # https://www.elastic.co/guide/en/elasticsearch/reference/7.x/indices-create-index.html
+  mutate {
+    lowercase => [ "[container][image][name]" ]
+  }
+  # Sample inputs:
+  # jupyterhub-dpt:v1.01
+  # bitsensor/elastalert:3.0.0-beta.0
+  # glb-docker-local-prd.artifactory-prod.localhost.com/dpt/jupyter/tw-notebook:2f60a8a
+  grok {
+    match => {
+      "[container][image][name]" =>
+        "(((?<image_repo>[^/]+)/)?(?<image_dir>.+)/)?(?<image_name>[^:/]+):(?<image_version>.+)"
+    }
+  }
+  mutate {
+    rename => { "image_repo" => "[container][image][repo]" }
+    rename => { "image_dir" => "[container][image][dir]" }
+    rename => { "image_name" => "[container][image][name]" }
+    rename => { "image_version" => "[container][image][version]" }
+  }
+{% if logstash_beats_plain_splunk_enabled | default(False) %}
+  # clone nginx, opa and adx-bridge events for splunk
+  if [container][image][name] in ["nginx", "opa", "adx-bridge"] {
+    clone {
+      clones => ['splunk']
+    }
+  }
+{% endif %}
+{% if logstash_beats_plain_kafka_enabled | default(False) %}
+  # clone opa events for kafka
+  if [container][image][name] == "opa" {
+    clone {
+      clones => ['kafka']
+    }
+  }
+{% endif %}
+}
+
+output {
+{% if logstash_beats_plain_splunk_enabled | default(False) %}
+  if [type] == "splunk" {
+    http {
+      http_method => "post"
+      url => "{{ logstash_beats_plain_splunk_url }}"
+{% if logstash_beats_plain_splunk_cacert %}
+      cacert => "/usr/share/logstash/config/{{ logstash_beats_plain_splunk_cacert }}"
+{% endif %}
+      headers => ["Authorization", "Splunk {{ logstash_beats_plain_splunk_token }}"]
+    }
+  }
+  else
+{% endif %}
+
+{% if logstash_beats_plain_kafka_enabled | default(False) %}
+  if [type] == "kafka" and [container][image][name] == "opa" {
+    kafka {
+      topic_id => "dpt-opa"
+      acks => "all"
+      bootstrap_servers => "{{ logstash_beats_plain_kafka_bootstrap_servers }}"
+      compression_type => "snappy"
+      linger_ms => 50
+      security_protocol => "SSL"
+      ssl_key_password => "{{ logstash_beats_plain_kafka_ssl_key_password }}"
+      ssl_keystore_location =>
+        "/usr/share/logstash/config/{{ logstash_beats_plain_kafka_ssl_keystore }}"
+      ssl_keystore_password =>
+        "{{ logstash_beats_plain_kafka_ssl_keystore_password }}"
+      ssl_keystore_type => "JKS"
+      ssl_truststore_location =>
+        "/usr/share/logstash/config/{{ logstash_beats_plain_kafka_ssl_truststore }}"
+      ssl_truststore_password =>
+        "{{ logstash_beats_plain_kafka_ssl_truststore_password }}"
+      ssl_truststore_type => "JKS"
+    }
+  }
+  else
+{% endif %}
+
+{% if logstash_beats_plain_splunk_enabled | default(False) or logstash_beats_plain_kafka_enabled %}
+  {
+{% endif %}
+
+  pipeline {
+    send_to => [coralogix]
+  }
+
+{% if logstash_beats_plain_splunk_enabled | default(False) or logstash_beats_plain_kafka_enabled %}
+  }
+{% endif %}
+
+}
