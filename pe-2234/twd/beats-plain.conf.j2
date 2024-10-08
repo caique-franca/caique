@@ -1,0 +1,87 @@
+#
+# Gitlab managed
+#
+
+input {
+  beats {
+    port => "5044"
+    ssl => true
+    ssl_certificate => "/usr/share/logstash/config/logstash.crt"
+    ssl_key => "/usr/share/logstash/config/logstash.key"
+    ssl_key_passphrase => "{{ logstash_ssl_key_passphrase }}"
+  }
+
+  pipeline { address => "beats-plain" }
+}
+
+filter {
+  grok {
+    match => {
+      "message" => [
+        "^(?<event_timestamp>%{YEAR}[/-]%{MONTHNUM}[/-]%{MONTHDAY}\s*%{TIME})\s*%{GREEDYDATA:common_log_message}",
+        #remove once offerdist logs are formatted correctly
+        "(?<event_timestamp>%{YEAR}/%{MONTHNUM}/%{MONTHDAY}\s%{HOUR}:%{MINUTE}:%{SECOND}):%{GREEDYDATA:common_log_message}",
+        "^(?<event_timestamp>%{DATE}\s*%{TIME})\s*%{GREEDYDATA:common_log_message}",
+        ##--->remove this once uby2queued_stats.log date is formatted as mm/dd/yy <------####
+        "^(?<event_timestamp>%{MONTHNUM}/%{MONTHDAY}\s*%{TIME})\s*%{GREEDYDATA:common_log_message}",
+        "%{TIMESTAMP_ISO8601:event_timestamp}%{SPACE}%{GREEDYDATA:common_log_message}",
+        #stunnel logs
+        "^(?<event_timestamp>%{YEAR}.%{MONTHNUM}.%{MONTHDAY}\s*%{TIME})\s*%{GREEDYDATA:common_log_message}"
+      ]
+      tag_on_failure => [ "grok_failure_beats_common_date" ]
+    }
+  }
+
+  # if the field is considered as a timestamp the filter will fail.
+  # https://github.com/logstash-plugins/logstash-filter-date/issues/95
+  mutate { convert => { "event_timestamp" => "string" }}
+  date {
+      match => [ "event_timestamp","MM/dd/YY HH:mm:ss", "YYYY/MM/dd HH:mm:ss", "YYYY-MM-dd HH:mm:ss", "YYYY/MM/dd HH:mm:ss,SSS", "MM-dd-YY HH:mm:ss", "MM/dd HH:mm:ss", "YYYY.MM.dd HH:mm:ss", "MM/dd HH:mm:ss,SSS", "ISO8601" ]
+      timezone => "America/New_York"
+      target => "event_timestamp"
+      tag_on_failure => [ "grok_failure_common_date_convert" ]
+  }
+
+  if ![fields][env] {
+    mutate { add_field => { "[fields][env]" => "missing" } }
+    mutate { add_field => { "[fields][error_info]" => "fields.env missing" } }
+  }
+
+  if ![fields][region] {
+    mutate { add_field => { "[fields][region]" => "missing" } }
+    mutate { add_field => { "[fields][error_info]" => "fields.region missing" } }
+  }
+
+  mutate {
+    add_field => { "[@metadata][application]" => "%{[fields][region]}-%{[fields][env]}" }
+    add_field => { "[@metadata][subsystem]" => "%{[fields][app_group]}" }
+    add_field => { "[fields][error_info]" => "Processed by %{[fields][region]}-%{[fields][env]} logstash" }
+  }
+
+  ruby {code => "
+    event.set('[@metadata][event]', event.to_json)
+    event.set('[@metadata][host]', event.get('[host][name]'))
+  "}
+}
+
+output {
+  # Coralogix
+  http {
+    url => "{{ coralogix.endpoint }}"
+    http_method => "post"
+    headers => ["private_key", "{{ coralogix.localhost_twd_key }}"]
+    format => "json_batch"
+    codec => "json"
+    mapping => {
+      "applicationName" => "%{[@metadata][application]}"
+      "subsystemName" => "%{[@metadata][subsystem]}"
+      "computerName" => "%{[@metadata][host]}"
+      "text" => "%{[@metadata][event]}"
+    }
+    http_compression => false
+    automatic_retries => 5
+    retry_non_idempotent => true
+    connect_timeout => 30
+    keepalive => false
+  }
+}
