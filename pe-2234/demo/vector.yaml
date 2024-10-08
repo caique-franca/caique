@@ -1,0 +1,43 @@
+[sources.filebeat]
+  type = "file"
+
+[transforms.add_fields]
+  type = "remap"
+  inputs = ["filebeat"]
+  source = '''
+  # Add custom fields to the event
+  .fields.logstash_host = "{{ inventory_hostname }}"
+
+  # Set metadata-like fields directly in the event
+  .application = "us-dev"
+  .subsystem = "logstash-test"
+  .host_name = .host.name
+
+  # Convert the entire event to JSON for the "text" field
+  .event = encode_json!(.)
+  '''
+
+[sinks.coralogix]
+  type = "http"
+  inputs = ["add_fields"]
+  uri = "https://api.coralogix.us/logs/rest/singles"
+  method = "post"
+  encoding.codec = "json"
+  compression = "none"
+  headers = { "private_key" = "{{ coralogix.locaweb_platform_key }}" }
+  retry_attempts = 5
+  retry_initial_backoff_secs = 30
+  request_timeout_secs = 30
+  keepalive = false
+  batch.max_bytes = 1048576
+  batch.timeout_secs = 1
+
+  # Mapping fields to Coralogix format
+  [sinks.coralogix.encoding]
+    codec = "json"
+    field_mapping = {
+      "applicationName" = ".application",
+      "subsystemName" = ".subsystem",
+      "computerName" = ".host_name",
+      "text" = ".event"
+    }
