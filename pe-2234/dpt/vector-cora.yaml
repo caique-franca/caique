@@ -1,0 +1,54 @@
+[sources.pipeline]
+  type = "vector"
+  address = "{{ item.path | basename | regex_replace('^([^\\.]*).*', '\\1') }}"
+
+[transforms.add_subsystem]
+  type = "remap"
+  inputs = ["pipeline"]
+  source = '''
+  # Determine subsystem based on conditions
+  if .kubernetes.deployment.name == "prefect-agent" {
+    .subsystem = .kubernetes.deployment.name
+  } else if exists(.cloudwatch_logs.log_group) {
+    .subsystem = .name
+  } else {
+    .subsystem = .container.image.name
+  }
+  '''
+
+[transforms.add_metadata]
+  type = "remap"
+  inputs = ["add_subsystem"]
+  source = '''
+  # Add metadata fields
+  .application = "us-dev"
+  .fields.logstash_host = "{{ inventory_hostname }}"
+
+  # Convert event to JSON for sending
+  .event = encode_json!(.)
+  .host_name = .host.name
+  '''
+
+[sinks.coralogix]
+  type = "http"
+  inputs = ["add_metadata"]
+  uri = "{{ coralogix.endpoint }}"
+  method = "post"
+  encoding.codec = "json"
+  headers = { "private_key" = "{{ coralogix.localhost_data_key }}" }
+  compression = "none"
+  retry_attempts = 5
+  request_timeout_secs = 30
+  keepalive = false
+  batch.max_bytes = 1048576
+  batch.timeout_secs = 1
+
+  # Field mapping for Coralogix
+  [sinks.coralogix.encoding]
+    codec = "json"
+    field_mapping = {
+      "applicationName" = ".application",
+      "subsystemName" = ".subsystem",
+      "computerName" = ".host_name",
+      "text" = ".event"
+    }
