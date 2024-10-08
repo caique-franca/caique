@@ -1,0 +1,52 @@
+#
+# Gitlab managed
+#
+
+input {
+  beats {
+    port => "5044"
+    ssl => true
+    ssl_certificate => "/usr/share/logstash/config/logstash.crt"
+    ssl_key => "/usr/share/logstash/config/logstash.key"
+    ssl_key_passphrase => "{{ logstash_ssl_key_passphrase }}"
+  }
+
+  pipeline { address => "beats-plain" }
+}
+
+filter {
+
+  mutate {
+    add_field => { "[fields][logstash_host]" => "{{ inventory_hostname }}" }
+  }
+
+  ruby {code => "
+    event.set('[@metadata][application]', 'us-dev')
+    event.set('[@metadata][subsystem]', 'logstash-test')
+    event.set('[@metadata][host]', event.get('[host][name]'))
+    event.set('[@metadata][event]', event.to_json)
+    "
+  }
+}
+
+output {
+  # Coralogix
+  http {
+    url => "https://api.coralogix.us/logs/rest/singles"
+    http_method => "post"
+    headers => ["private_key", "{{ coralogix.locaweb_platform_key }}"]
+    format => "json_batch"
+    codec => "json"
+    mapping => {
+      "applicationName" => "%{[@metadata][application]}"
+      "subsystemName" => "%{[@metadata][subsystem]}"
+      "computerName" => "%{[@metadata][host]}"
+      "text" => "%{[@metadata][event]}"
+    }
+    http_compression => false
+    automatic_retries => 5
+    retry_non_idempotent => true
+    connect_timeout => 30
+    keepalive => false
+  }
+}
