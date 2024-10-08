@@ -1,0 +1,57 @@
+[sources.cloudwatch]
+  type = "aws_cloudwatch_logs"
+  log_group_names = [
+    {{ '\"' + logstash_cloudwatch_logs_log_group | join('", "') + '\"' }}
+  ]
+  region = "us-east-1"
+  access_key_id = "AKIAXKCRUTUR4WH2ROCV"
+  secret_access_key = "{{ logstash_cloudwatch_logs_secret_access_key }}"
+  scrape_interval_secs = 60
+
+  {% if env == "dev" %}
+  # Configurar o proxy para ambiente de desenvolvimento
+  proxy.url = "{{ proxy_settings['HTTP_PROXY'] }}"
+  {% endif %}
+
+[transforms.parse_json]
+  type = "remap"
+  inputs = ["cloudwatch"]
+  source = '''
+  # Tenta converter a mensagem para JSON
+  .message, err = parse_json(.message)
+  if err != null {
+    # Skip parsing if invalid JSON (similar to skip_on_invalid_json in Logstash)
+    del(.message)
+  }
+  '''
+
+[transforms.extract_log_group_name]
+  type = "remap"
+  inputs = ["parse_json"]
+  source = '''
+  # Extrair o nome do log_group a partir da última parte da string
+  .name, err = parse_regex(.cloudwatch_logs.log_group, r"(?<name>[^/]+)$").name
+  if err != null {
+    del(.name)
+  }
+  '''
+
+[transforms.lowercase_name]
+  type = "remap"
+  inputs = ["extract_log_group_name"]
+  source = '''
+  # Converter o campo "name" para letras minúsculas
+  .name = downcase!(.name)
+  '''
+
+[sinks.coralogix]
+  type = "http"
+  inputs = ["lowercase_name"]
+  uri = "https://api.coralogix.us/logs/rest/singles"
+  method = "post"
+  encoding.codec = "json"
+  headers = { "private_key" = "{{ coralogix.locaweb_platform_key }}" }
+  compression = "none"
+  retry_attempts = 5
+  request.timeout_secs = 30
+  keepalive = false
