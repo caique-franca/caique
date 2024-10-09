@@ -44,3 +44,6 @@ if is_null(.fields.region) {
 
 # Atualiza o campo "error_info"
 .fields.error_info = "Processed by " + .fields.region + "-" + .fields.env + " logstash"
+
+parse_regex(.message, r'^(?P<event_timestamp>\d{4}[/-]\d{2}[/-]\d{2}\s*\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*(?P<common_log_message>.*)')
+
