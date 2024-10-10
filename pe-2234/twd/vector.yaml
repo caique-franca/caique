@@ -1,3 +1,7 @@
+# Attempt to parse the message field for various timestamp formats
+# 1. Optional brackets and optional milliseconds in the format YYYY-MM-DD HH:MM:SS,mmm or YYYY-MM-DD HH:MM:SS
+# 2. Common IP-based log format with date in the format DD/Mon/YYYY:HH:MM:SS -TZ
+# 3. Standard date format with different separators ("/" or "-")
 .parse, err = parse_regex(.message, r'\[?(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[,\.]\d{3})?)\]?\s*(?P<common_log_message>.*)') ??
                 parse_regex(.message, r'^(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s-\s-\s\[(?P<event_timestamp>\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s-\d{4})\]\s*(?P<common_log_message>.*)') ??
                 parse_regex(.message, r'^(?P<event_timestamp>\d{4}[/-]\d{2}[/-]\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
@@ -6,21 +10,26 @@
                 parse_regex(.message, r'^(?P<event_timestamp>\d{4}\.\d{2}\.\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
                 parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\s*(?P<common_log_message>.*)')
 
-  if err != null {
+# If no regex pattern matched, add a tag to mark this as a failure
+if err != null {
     .tags = "regex_failure_beats_common_date"
-  }
+}
 
-  .event_timestamp = .parse.event_timestamp
-  del(.parse)
-  
-  if is_null(.fields.env) {
+# Extract the parsed event_timestamp and delete the temporary parse result
+.event_timestamp = .parse.event_timestamp
+del(.parse)
+
+# Check if the environment field is missing, if so, mark it as "missing"
+if is_null(.fields.env) {
     .fields.env = "missing"
     .fields.error_info = "fields.env missing"
-  }
+}
 
-  if is_null(.fields.region) {
+# Check if the region field is missing, if so, mark it as "missing"
+if is_null(.fields.region) {
     .fields.region = "missing"
     .fields.error_info = "fields.region missing"
-  }
+}
 
-  .fields.error_info, err = "Processed by " + .fields.region + "-" + .fields.env + " logstash"
+# Combine region and env to add additional information in the error_info field
+.fields.error_info, err = "Processed by " + .fields.region + "-" + .fields.env + " logstash"
