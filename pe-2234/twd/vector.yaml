@@ -1,45 +1,18 @@
-[sources.filebeat]
-  type = "file"
+.parse, err = parse_regex(.message, r'\[?(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[,\.]\d{3})?)\]?\s*(?P<common_log_message>.*)') ??
+                parse_regex(.message, r'^(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s-\s-\s\[(?P<event_timestamp>\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s-\d{4})\]\s*(?P<common_log_message>.*)') ??
+                parse_regex(.message, r'^(?P<event_timestamp>\d{4}[/-]\d{2}[/-]\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
+                parse_regex(.message, r'(?P<event_timestamp>\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}):(?P<common_log_message>.*)') ??
+                parse_regex(.message, r'^(?P<event_timestamp>\d{2}/\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
+                parse_regex(.message, r'^(?P<event_timestamp>\d{4}\.\d{2}\.\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
+                parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\s*(?P<common_log_message>.*)')
 
-[transforms.parse_log_message]
-  type = "remap"
-  inputs = ["filebeat"]
-  source = '''
-  # Grok-style pattern matching for event timestamp and common log message
-  .event_timestamp, .common_log_message = (null, null)
-
- .message = parse_regex(.message, r'^(?P<event_timestamp>\d{4}[/-]\d{2}[/-]\d{2}\s*\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*(?P<common_log_message>.*)') ??
-             parse_regex(.message, r'(?P<event_timestamp>\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}):(?P<common_log_message>.*)') ??
-             parse_regex(.message, r'^(?P<event_timestamp>\d{2}/\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
-             parse_regex(.message, r'^(?P<event_timestamp>\d{4}\.\d{2}\.\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
-             parse_regex(.message, r'(?P<event_timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\s*(?P<common_log_message>.*)') ??
-             parse_regex(.message, r'^(?P<event_timestamp>\d{4}\.\d{2}\.\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)')
-
-  if is_null(.event_timestamp) {
-    log("Failed to parse event_timestamp with grok patterns", rate_limit_secs: 30)
-    .tags = ["grok_failure_beats_common_date"]
+  if err != null {
+    .tags = "regex_failure_beats_common_date"
   }
-  '''
 
-[transforms.convert_timestamp]
-  type = "remap"
-  inputs = ["parse_log_message"]
-  source = '''
-  # Convert event_timestamp to string and parse to proper timestamp format
-  .event_timestamp = to_string(.event_timestamp)
-  .event_timestamp = parse_timestamp(.event_timestamp, formats: ["%m/%d/%y %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S,%3f", "%m-%d-%y %H:%M:%S", "%m/%d %H:%M:%S", "%Y.%m.%d %H:%M:%S", "%m/%d %H:%M:%S,%3f", "ISO8601"], timezone: "America/New_York")
-
-  if is_null(.event_timestamp) {
-    log("Failed to convert event_timestamp to valid format", rate_limit_secs: 30)
-    .tags = ["grok_failure_common_date_convert"]
-  }
-  '''
-
-[transforms.add_fields]
-  type = "remap"
-  inputs = ["convert_timestamp"]
-  source = '''
-  # Ensure 'env' and 'region' fields are present, otherwise mark as missing
+  .event_timestamp = .parse.event_timestamp
+  del(.parse)
+  
   if is_null(.fields.env) {
     .fields.env = "missing"
     .fields.error_info = "fields.env missing"
@@ -50,41 +23,4 @@
     .fields.error_info = "fields.region missing"
   }
 
-  # Add additional metadata fields
-  .application = .fields.region + "-" + .fields.env
-  .subsystem = .fields.app_group
-  .fields.error_info = "Processed by " + .fields.region + "-" + .fields.env + " logstash"
-  '''
-
-[transforms.prepare_event]
-  type = "remap"
-  inputs = ["add_fields"]
-  source = '''
-  # Prepare the event in JSON format for sending
-  .event = encode_json!(.)
-  .host_name = .host.name
-  '''
-
-[sinks.coralogix]
-  type = "http"
-  inputs = ["prepare_event"]
-  uri = "{{ coralogix.endpoint }}"
-  method = "post"
-  encoding.codec = "json"
-  headers = { "private_key" = "{{ coralogix.localhost_twd_key }}" }
-  compression = "none"
-  retry_attempts = 5
-  request_timeout_secs = 30
-  keepalive = false
-  batch.max_bytes = 1048576
-  batch.timeout_secs = 1
-
-  # Mapping fields to Coralogix format
-  [sinks.coralogix.encoding]
-    codec = "json"
-    field_mapping = {
-      "applicationName" = ".application",
-      "subsystemName" = ".subsystem",
-      "computerName" = ".host_name",
-      "text" = ".event"
-    }
+  .fields.error_info, err = "Processed by " + .fields.region + "-" + .fields.env + " logstash"
