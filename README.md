@@ -1,5 +1,5 @@
 # Tenta capturar o timestamp em diferentes formatos, incluindo colchetes e IP
-.parse, err = parse_regex(.message, r'\[(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\]\s*(?P<common_log_message>.*)') ??
+.parse, err = parse_regex(.message, r'\[?(?P<event_timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[,\.]\d{3})?)\]?\s*(?P<common_log_message>.*)') ??
                parse_regex(.message, r'^(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s-\s-\s\[(?P<event_timestamp>\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s-\d{4})\]\s*(?P<common_log_message>.*)') ??
                parse_regex(.message, r'^(?P<event_timestamp>\d{4}[/-]\d{2}[/-]\d{2}\s*\d{2}:\d{2}:\d{2})\s*(?P<common_log_message>.*)') ??
                parse_regex(.message, r'(?P<event_timestamp>\d{4}/\d{2}/\d{2}\s\d{2}:\d{2}:\d{2}):(?P<common_log_message>.*)') ??
