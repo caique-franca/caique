@@ -1,0 +1,106 @@
+input { pipeline { address => "{{ item.path | basename | regex_replace('^([^\\.]*).*', '\\1') }}" } }
+
+filter {
+  # Check for missing fields / normalise the field values
+  #
+  if [Environment] {
+    # If we have Production or Development then set env to prd or dev
+    #
+    if [Environment] == "Production" {
+      mutate { add_field => { "[fields][env]" => "prd" } }
+    }
+    else if [Environment] == "Development" {
+      mutate { add_field => { "[fields][env]" => "dev" } }
+    }
+    else {
+      # Unknown value in Environment
+      #
+      mutate {
+        add_field => { "[fields][env]" => "%{[Environment]}" }
+        add_field => { "[fields][error_info]" => "Environment unknown value" }
+      }
+    }
+  }
+  else {
+    # Environment value is missing
+    #
+    mutate {
+      add_field => { "[fields][env]" => "missing" }
+      add_field => { "[fields][error_info]" => "Environment missing" }
+    }
+  }
+
+  # Grab the AppLocation and convert it to lowercase
+  #
+  if [AppLocation] {
+    mutate {
+      add_field => { "[fields][region]" => "%{[AppLocation]}" }
+    }
+
+    mutate {
+      lowercase => [ "[fields][region]" ]
+    }
+  }
+  else {
+    # Location is missing
+    #
+    mutate {
+      add_field => { "[fields][region]" => "missing" }
+      add_field => { "[fields][error_info]" => "AppLocation missing" }
+    }
+  }
+
+  # AppGroup is missing
+  #
+  if ![AppGroup] {
+    mutate {
+      add_field => { "[AppGroup]" => "missing" }
+      add_field => { "[fields][error_info]" => "AppGroup missing" }
+    }
+  }
+
+  # AppRef is
+  #
+  if ![AppRef] {
+    mutate {
+      add_field => { "[AppRef]" => "missing" }
+      add_field => { "[fields][error_info]" => "AppRef missing" }
+    }
+  }
+
+  # Set fields for Coralogix
+  #
+  mutate {
+    add_field => { "[@metadata][application]" => "%{[fields][region]}-%{[fields][env]}" }
+    add_field => { "[@metadata][subsystem]" => "%{[AppGroup]}-%{[AppRef]}" }
+    add_field => { "[fields][error_info]" => "Processed by %{[fields][region]}-%{[fields][env]} logstash" }
+  }
+
+  ruby {code => "
+    event.set('[@metadata][event]', event.to_json)
+    event.set('[@metadata][host]', event.get('[host][name]'))
+  "}
+}
+
+
+output {
+  # Coralogix
+  http {
+    url => "{{ coralogix.endpoint }}"
+    http_method => "post"
+    headers => ["private_key", "{{ coralogix.localhost_infoman_key }}"]
+    format => "json_batch"
+    codec => "json"
+    mapping => {
+      "applicationName" => "%{[@metadata][application]}"
+      "subsystemName" => "%{[@metadata][subsystem]}"
+      "computerName" => "%{[@metadata][host]}"
+      "text" => "%{[@metadata][event]}"
+    }
+    http_compression => false
+    automatic_retries => 5
+    retry_non_idempotent => true
+    connect_timeout => 30
+    keepalive => false
+  }
+}

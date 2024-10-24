@@ -1,0 +1,61 @@
+logstash:
+  logstashConfig:
+    logstash.yml: |
+      http.host: "0.0.0.0"
+      pipeline.ecs_compatibility: disabled
+      pipeline.workers: 8
+      pipeline.batch.size: 1000
+      
+    pipelines.yml: |
+      - pipeline.id: beats
+        path.config: "/usr/share/logstash/pipeline/beats.conf"
+
+  logstashPipeline:
+    beats.conf: |
+      input {
+        beats {
+          port => 5044
+          ssl => true
+          ssl_certificate => "/usr/share/logstash/certs/tls.crt"
+          ssl_key => "/usr/share/logstash/cert-cache/tls.pkcs8.key"
+        }
+      }
+      filter {
+        if ![fields][coralogix_application] {
+          mutate { add_field => { "[fields][coralogix_application]" => "missing" } }
+        }
+        if ![fields][coralogix_subsystem] {
+          mutate { add_field => { "[fields][coralogix_subsystem]" => "missing" } }
+        }
+        ruby {code => "
+          event.set('[@metadata][application]',  event.get('[fields][coralogix_application]'))
+          event.set('[@metadata][subsystem]', event.get('[fields][coralogix_subsystem]'))
+          event.set('[@metadata][host]', event.get('[host][name]'))
+          event.set('[@metadata][event]', event.to_json)
+          "}
+        mutate {  remove_field => [
+            "[fields][coralogix_application]",
+            "[fields][coralogix_subsystem]"
+            ]
+        }
+      }
+      output {
+        http {
+          url => "https://ingress.private.coralogix.us/logs/rest/singles"
+          http_method => "post"
+          headers => ["private_key", "{{ .Values.coralogix_api_key_apa }}"]
+          format => "json_batch"
+          codec => "json"
+          mapping => {
+            "applicationName" => "%{[@metadata][application]}"
+            "subsystemName" => "%{[@metadata][subsystem]}"
+            "computerName" => "%{[@metadata][host]}"
+            "text" => "%{[@metadata][event]}"
+          }
+          http_compression => false
+          automatic_retries => 5
+          retry_non_idempotent => true
+          connect_timeout => 30
+          keepalive => false
+        }
+      }

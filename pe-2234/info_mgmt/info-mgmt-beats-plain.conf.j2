@@ -1,0 +1,27 @@
+#
+# Gitlab managed
+#
+
+input {
+  beats {
+    port => "5044"
+    ssl => true
+    ssl_certificate => "/usr/share/logstash/config/logstash.crt"
+    ssl_key => "/usr/share/logstash/config/logstash.key"
+    ssl_key_passphrase => "{{ logstash_ssl_key_passphrase }}"
+  }
+
+  pipeline { address => "beats-plain" }
+}
+
+filter {
+	mutate {
+	  add_tag => ["plain_pipeline"]
+	}
+}
+
+output {
+  pipeline {
+    send_to => [coralogix]
+  }
+}
