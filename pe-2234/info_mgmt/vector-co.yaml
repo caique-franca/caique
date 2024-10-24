@@ -1,0 +1,49 @@
+# Vector configuration
+
+# INPUT
+[sources.pipeline_input]
+  type = "socket"
+  address = "{{ item.path | basename | regex_replace('^([^\\.]*).*', '\\1') }}"
+  mode = "tcp"  # Ou "udp", dependendo do uso
+  # Adicione opções TLS se necessário
+
+# TRANSFORMS
+[transforms.check_env]
+  type = "remap"
+  inputs = ["pipeline_input"]
+  source = '''
+  if exists(.Environment) {
+    if .Environment == "Production" {
+      .fields.env = "prd"
+    } else if .Environment == "Development" {
+      .fields.env = "dev"
+    } else {
+      .fields.env = .Environment
+      .fields.error_info = "Environment unknown value"
+    }
+  } else {
+    .fields.env = "missing"
+    .fields.error_info = "Environment missing"
+  }
+  '''
+
+[transforms.check_location]
+  type = "remap"
+  inputs = ["check_env"]
+  source = '''
+  if exists(.AppLocation) {
+    .fields.region = downcase(.AppLocation)
+  } else {
+    .fields.region = "missing"
+    .fields.error_info = "AppLocation missing"
+  }
+  '''
+
+# OUTPUT
+[sinks.http_output]
+  type = "http"
+  inputs = ["check_location"]
+  uri = "https://your.endpoint.url"  # Substitua pelo endpoint correto
+  method = "post"
+  encoding.codec = "json"
+  headers.api_key = "{{ .Values.coralogix_api_key_apa }}"
