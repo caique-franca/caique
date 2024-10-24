@@ -1,0 +1,36 @@
+# Vector configuration
+
+# INPUT - Beats com SSL
+[sources.beats_input]
+  type = "socket"
+  address = "0.0.0.0:5044"
+  mode = "tcp"
+  tls.enabled = true
+  tls.certs_file = "/usr/share/logstash/config/logstash.crt"
+  tls.key_file = "/usr/share/logstash/config/logstash.key"
+  tls.key_passphrase = "${LOGSTASH_SSL_KEY_PASSPHRASE}"  # Use variáveis de ambiente para segurança
+
+# INPUT - Pipeline
+[sources.pipeline_input]
+  type = "socket"
+  address = "beats-plain"
+  mode = "tcp"  # Ou "udp", dependendo do uso
+
+# TRANSFORM - Adicionar tag
+[transforms.add_tag]
+  type = "remap"
+  inputs = ["pipeline_input", "beats_input"]
+  source = '''
+  .tags = [.tags, "plain_pipeline"] ?? ["plain_pipeline"]
+  '''
+
+# OUTPUT - Para um pipeline/serviço Coralogix
+[sinks.coralogix_output]
+  type = "http"
+  inputs = ["add_tag"]
+  uri = "https://your.coralogix.endpoint"
+  method = "post"
+  encoding.codec = "json"  # Enviar em formato JSON
+  auth.strategy = "basic"
+  auth.user = "${CORALOGIX_USER}"
+  auth.password = "${CORALOGIX_PASSWORD}"
