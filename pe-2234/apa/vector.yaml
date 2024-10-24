@@ -1,0 +1,41 @@
+# Vector configuration
+
+# INPUT
+[sources.beats_input]
+  type = "socket"
+  address = "0.0.0.0:5044"
+  mode = "tcp"
+  tls.enabled = true
+  tls.certs_file = "/usr/share/logstash/certs/tls.crt"
+  tls.key_file = "/usr/share/logstash/cert-cache/tls.pkcs8.key"
+
+# TRANSFORMS
+[transforms.add_fields]
+  type = "remap"
+  inputs = ["beats_input"]
+  source = '''
+  .coralogix_application = if (.fields.coralogix_application == null) { "missing" } else { .fields.coralogix_application }
+  .coralogix_subsystem = if (.fields.coralogix_subsystem == null) { "missing" } else { .fields.coralogix_subsystem }
+  .metadata.application = .coralogix_application
+  .metadata.subsystem = .coralogix_subsystem
+  .metadata.host = .host.name
+  .metadata.event = encode_json(.)
+  '''
+  drop_on_abort = false
+
+[transforms.remove_fields]
+  type = "remap"
+  inputs = ["add_fields"]
+  source = '''
+  del(.fields.coralogix_application)
+  del(.fields.coralogix_subsystem)
+  '''
+
+# OUTPUT
+[sinks.http_output]
+  type = "http"
+  inputs = ["remove_fields"]
+  uri = "https://ingress.private.coralogix.us/logs/rest/singles"
+  method = "post"
+  headers.private_key = "{{ .Values.coralogix_api_key_apa }}"
+  encoding.codec = "json"
